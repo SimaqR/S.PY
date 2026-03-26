@@ -16,7 +16,7 @@ player_speed = 5
 # GAME
 bullets = []
 enemy_bullets = []
-enemies = []
+enemies  = []
 powerups = []
 
 score = 0
