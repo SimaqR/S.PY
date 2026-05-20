@@ -5,16 +5,21 @@ import math
 
 pygame.init()
 
-WIDTH, HEIGHT = 800, 600
+WIDTH, HEIGHT = 900, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 32)
 
 # LOAD IMAGES
+
 player_img = pygame.image.load("fighterjet25.png").convert_alpha()
 enemy_normal_img = pygame.image.load("enemy2.png").convert_alpha()
 enemy_fast_img = pygame.image.load("enemy3.png").convert_alpha()
 enemy_tank_img = pygame.image.load("enemy4.png").convert_alpha()
+boss_img = pygame.image.load("boss.png").convert_alpha()
+
+# STAR IMAGE
+star_img = pygame.image.load("star.png").convert_alpha()
 
 # SCALE IMAGES
 
@@ -22,6 +27,10 @@ player_img = pygame.transform.scale(player_img, (64, 48))
 enemy_normal_img = pygame.transform.scale(enemy_normal_img, (90, 70))
 enemy_fast_img = pygame.transform.scale(enemy_fast_img, (90, 70))
 enemy_tank_img = pygame.transform.scale(enemy_tank_img, (120, 90))
+boss_img = pygame.transform.scale(boss_img, (220, 180))
+
+# SCALE STAR
+star_img = pygame.transform.scale(star_img, (32, 32))
 
 # PLAYER
 
@@ -44,6 +53,7 @@ powerups = []
 score = 0
 lives = 3
 wave = 1
+wave_timer = 0
 
 shoot_delay = 550
 last_shot = 0
@@ -56,9 +66,25 @@ difficulty_settings = {
     "easy":   {"spawn_rate": 1.5, "enemy_speed": 0.8, "enemy_hp": 0.8},
     "normal": {"spawn_rate": 1.0, "enemy_speed": 1.0, "enemy_hp": 1.0},
     "hard":   {"spawn_rate": 0.7, "enemy_speed": 1.3, "enemy_hp": 1.4},
+    "insane": {"spawn_rate": 0.5, "enemy_speed": 1.8, "enemy_hp": 2.0}
 }
 
-difficulty = "normal"
+difficulty_levels = {
+
+    "easy": [10, 25, 50],
+
+    "normal": [20, 40, 70],
+
+    "hard": [30, 60, 100],
+
+    "insane": [80, 140, 200]
+}
+
+difficulty = "easy"
+
+current_star = 0
+boss_spawned = False
+game_won = False
 
 # STATE
 
@@ -66,11 +92,58 @@ state = "start"
 
 # POWERUPS
 
+particles = []
+
+# DASH
+dash_speed = 18
+dash_cooldown = 1000
+last_dash = 0
+
+# SCREEN FLASH
+flash_timer = 0
+
+# BOSS WARNING
+warning_timer = 0
 def spawn_powerup(x, y):
+
     return {
         "rect": pygame.Rect(x, y, 20, 20),
         "type": random.choice(["heal", "rapid", "spread"])
     }
+
+# DRAW DIFFICULTY STARS
+
+def draw_difficulty(y, label, color, values, key_num):
+
+    text = font.render(f"[{key_num}] {label}", True, color)
+    screen.blit(text, (80, y))
+
+    x = 260
+
+    # 1 STAR
+    screen.blit(star_img, (x, y - 5))
+
+    wave1 = font.render(str(values[0]), True, (255,255,255))
+    screen.blit(wave1, (x + 40, y))
+
+    # 2 STARS
+    x += 120
+
+    screen.blit(star_img, (x, y - 5))
+    screen.blit(star_img, (x + 28, y - 5))
+
+    wave2 = font.render(str(values[1]), True, (255,255,255))
+    screen.blit(wave2, (x + 75, y))
+
+    # 3 STARS
+    x += 170
+
+    screen.blit(star_img, (x, y - 5))
+    screen.blit(star_img, (x + 28, y - 5))
+    screen.blit(star_img, (x + 56, y - 5))
+
+    wave3 = font.render(str(values[2]), True, (255,255,255))
+    screen.blit(wave3, (x + 105, y))
 
 # ENEMY SPAWN
 
@@ -80,8 +153,6 @@ def spawn_enemy():
     diff = difficulty_settings[difficulty]
 
     enemy_type = random.choice(["normal", "zigzag", "tank"])
-
-    # FAST ENEMY
 
     if enemy_type == "zigzag":
 
@@ -95,8 +166,6 @@ def spawn_enemy():
             "shoot_timer": 0
         }
 
-    # TANK ENEMY
-
     elif enemy_type == "tank":
 
         return {
@@ -108,14 +177,25 @@ def spawn_enemy():
             "shoot_timer": 0
         }
 
-    # NORMAL ENEMY
-
     return {
         "rect": pygame.Rect(WIDTH, y, 90, 70),
         "speed": 3 * diff["enemy_speed"],
         "hp": int(3 * diff["enemy_hp"]),
         "type": "normal",
         "reward": 2,
+        "shoot_timer": 0
+    }
+
+# FINAL BOSS
+
+def spawn_boss():
+
+    return {
+        "rect": pygame.Rect(WIDTH - 250, HEIGHT//2 - 90, 220, 180),
+        "speed": 2,
+        "hp": 300,
+        "type": "boss",
+        "reward": 100,
         "shoot_timer": 0
     }
 
@@ -132,8 +212,6 @@ while True:
 
         if event.type == pygame.KEYDOWN:
 
-            # SHOP TOGGLE
-
             if event.key == pygame.K_b:
 
                 if state == "Playing":
@@ -142,8 +220,6 @@ while True:
                 elif state == "shop":
                     state = "Playing"
 
-            # PAUSE
-
             if event.key == pygame.K_p:
 
                 if state == "Playing":
@@ -151,9 +227,6 @@ while True:
 
                 elif state == "pause":
                     state = "Playing"
-                    
-
-            # SHOP CONTROLS
 
             if state == "shop":
 
@@ -177,8 +250,6 @@ while True:
                     bullet_count += 1
                     coins -= 40
 
-            # START MENU
-
             if state == "start":
 
                 if event.key == pygame.K_1:
@@ -190,10 +261,11 @@ while True:
                 elif event.key == pygame.K_3:
                     difficulty = "hard"
 
+                elif event.key == pygame.K_4:
+                    difficulty = "insane"
+
                 if event.key == pygame.K_SPACE:
                     state = "Playing"
-
-            # GAME OVER
 
             if state == "gameover":
 
@@ -207,11 +279,36 @@ while True:
                     powerups.clear()
 
                     score = 0
-                    lives = 4
+                    lives = 3
+                    wave = 1
+                    current_star = 0
+                    game_won = False
+                    boss_spawned = False
 
                     state = "start"
 
-    # SHOP SCREEN
+            if game_won:
+
+                if event.key == pygame.K_SPACE:
+
+                    player.x, player.y = 50, HEIGHT // 2
+
+                    bullets.clear()
+                    enemy_bullets.clear()
+                    enemies.clear()
+                    powerups.clear()
+
+                    score = 0
+                    lives = 3
+                    wave = 1
+                    current_star = 0
+                    game_won = False
+                    boss_spawned = False
+                    difficulty = "easy"
+
+                    state = "start"
+
+    # SHOP
 
     if state == "shop":
 
@@ -247,34 +344,69 @@ while True:
 
         screen.fill((0,0,0))
 
-        screen.blit(
-            font.render("Press SPACE to start", True, (255,255,255)),
-            (280,250)
+        title = font.render("SELECT DIFFICULTY", True, (255,255,255))
+        screen.blit(title, (250,120))
+
+        draw_difficulty(
+            220,
+            "EASY",
+            (0,255,0),
+            difficulty_levels["easy"],
+            1
         )
 
-        screen.blit(
-            font.render("1 Easy | 2 Normal | 3 Hard", True, (200,200,200)),
-            (250,300)
+        draw_difficulty(
+            280,
+            "NORMAL",
+            (0,150,255),
+            difficulty_levels["normal"],
+            2
         )
 
-        screen.blit(
-            font.render(f"Selected: {difficulty}", True, (180,180,255)),
-            (300,340)
+        draw_difficulty(
+            340,
+            "HARD",
+            (255,60,60),
+            difficulty_levels["hard"],
+            3
         )
+
+        draw_difficulty(
+            400,
+            "INSANE",
+            (180,0,255),
+            difficulty_levels["insane"],
+            4
+        )
+
+        selected = font.render(
+            f"Selected: {difficulty.upper()}",
+            True,
+            (255,255,255)
+        )
+
+        screen.blit(selected, (280,470))
+
+        start_text = font.render(
+            "Press SPACE to start",
+            True,
+            (255,255,0)
+        )
+
+        screen.blit(start_text, (240,520))
 
         pygame.display.flip()
+
         continue
 
     # PAUSE
+
     if state == "pause":
 
-       
-     #overlay
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 20))
+        overlay.fill((0, 0, 0, 180))
         screen.blit(overlay, (0, 0))
 
-        # Animated text
         t = pygame.time.get_ticks()
         bounce = int(math.sin(t * 0.005) * 10)
 
@@ -296,6 +428,27 @@ while True:
         screen.blit(
             font.render("GAME OVER", True, (255,0,0)),
             (320,260)
+        )
+
+        screen.blit(
+            font.render("Press SPACE to return to menu", True, (255,255,255)),
+            (220,320)
+        )
+
+        pygame.display.flip()
+        continue
+
+    # WIN SCREEN
+
+    if game_won:
+
+        screen.fill((0,0,0))
+
+        win = font.render("YOU BEAT THE GAME!", True, (255,255,0))
+        screen.blit(win, (230, 260))
+        screen.blit(
+            font.render("Press SPACE to return to menu", True, (255,255,255)),
+            (210,320)
         )
 
         pygame.display.flip()
@@ -320,8 +473,6 @@ while True:
     player.x = max(0, min(player.x, WIDTH - player.width))
     player.y = max(0, min(player.y, HEIGHT - player.height))
 
-    # PLAYER SHOOTING
-
     if keys[pygame.K_SPACE]:
 
         if pygame.time.get_ticks() - last_shot > shoot_delay:
@@ -331,84 +482,79 @@ while True:
             for i in range(bullet_count):
 
                 spread_width = 40
-
-                spread = (
-                    (i / (bullet_count - 1) - 0.5) * spread_width
-                    if bullet_count > 1 else 0
-                )
+                spread = ((i / (bullet_count - 1) - 0.5) * spread_width if bullet_count > 1 else 0)
 
                 bullets.append([
                     player.x + player.width,
                     player.y + player.height / 2 + spread
                 ])
 
-    # SPAWN ENEMIES
+    if (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]) and pygame.time.get_ticks() - last_dash > dash_cooldown:
 
+        last_dash = pygame.time.get_ticks()
+
+        if keys[pygame.K_w]:
+            player.y -= dash_speed
+        if keys[pygame.K_s]:
+            player.y += dash_speed
+        if keys[pygame.K_a]:
+            player.x -= dash_speed
+        if keys[pygame.K_d]:
+            player.x += dash_speed
+
+        flash_timer = 10
+
+    wave_timer += 1
+
+    if wave_timer >= 600:
+        wave += 1
+        wave_timer = 0
+
+    final_wave = difficulty_levels[difficulty][current_star]
     diff = difficulty_settings[difficulty]
-
     spawn_chance = max(10, int((40 - wave * 2) * diff["spawn_rate"]))
 
-    if random.randint(1, spawn_chance) == 1:
-        enemies.append(spawn_enemy())
-
-    # PLAYER BULLETS
+    if wave < final_wave:
+        if random.randint(1, spawn_chance) == 1:
+            enemies.append(spawn_enemy())
+    elif wave >= final_wave and not boss_spawned:
+        enemies.append(spawn_boss())
+        boss_spawned = True
 
     for b in bullets[:]:
-
         b[0] += bullet_speed
-
         if b[0] > WIDTH:
             bullets.remove(b)
 
-    # ENEMY BULLETS
-
     for eb in enemy_bullets[:]:
-
         eb[0] += eb[2]
         eb[1] += eb[3]
 
-        # HIT PLAYER
-
         if player.collidepoint((eb[0], eb[1])):
-
             enemy_bullets.remove(eb)
-
             lives -= 1
             shake = 10
-
             continue
 
-        # REMOVE OFFSCREEN
-
         if eb[0] < 0 or eb[0] > WIDTH or eb[1] < 0 or eb[1] > HEIGHT:
-
             enemy_bullets.remove(eb)
 
-    # ENEMIES
-
     for e in enemies[:]:
-
         dx = player.centerx - e["rect"].centerx
         dy = player.centery - e["rect"].centery
-
         dist = math.hypot(dx, dy)
 
         if dist != 0:
-
             dx /= dist
             dy /= dist
 
         e["rect"].x += dx * e["speed"] * 0.8
         e["rect"].y += dy * e["speed"] * 0.8
 
-        # ENEMY SHOOTING
-
         e["shoot_timer"] += 1
 
         if e["shoot_timer"] > 90:
-
             e["shoot_timer"] = 0
-
             enemy_bullets.append([
                 e["rect"].centerx,
                 e["rect"].centery,
@@ -416,108 +562,92 @@ while True:
                 dy * 8
             ])
 
-        # ZIGZAG
-
         if e["type"] == "zigzag":
-
             e["angle"] += 0.2
             e["rect"].y += math.sin(e["angle"]) * 4
 
-        # PLAYER BULLET HIT
-
         for b in bullets[:]:
-
             if e["rect"].collidepoint(b):
-
                 bullets.remove(b)
-
                 e["hp"] -= damage
-
                 shake = 5
 
                 if e["hp"] <= 0:
+                    if e["type"] == "boss":
+                        current_star += 1
+                        boss_spawned = False
+                        wave = 1
+                        enemies.clear()
+                        enemy_bullets.clear()
+
+                        if current_star >= 3:
+                            current_star = 0
+                            if difficulty == "easy":
+                                difficulty = "normal"
+                            elif difficulty == "normal":
+                                difficulty = "hard"
+                            elif difficulty == "hard":
+                                difficulty = "insane"
+                            elif difficulty == "insane":
+                                game_won = True
 
                     enemies.remove(e)
-
                     score += 1
                     coins += e["reward"]
 
                     if random.random() < 0.2:
-
-                        powerups.append(
-                            spawn_powerup(e["rect"].x, e["rect"].y)
-                        )
+                        powerups.append(spawn_powerup(e["rect"].x, e["rect"].y))
 
                     break
 
-        # PLAYER COLLISION
-
         if player.colliderect(e["rect"]):
-
             enemies.remove(e)
-
             lives -= 1
             shake = 10
 
-        # REMOVE OFFSCREEN
-
-        if e["rect"].x < 0:
+        if e["rect"].x < -100:
             enemies.remove(e)
 
-    # POWERUPS
-
     for p in powerups[:]:
-
         if player.colliderect(p["rect"]):
-
             if p["type"] == "heal":
                 lives += 1
-
             elif p["type"] == "rapid":
                 shoot_delay = max(100, shoot_delay - 50)
-
             elif p["type"] == "spread":
                 bullet_count += 1
-
             powerups.remove(p)
-
-    # GAME OVER
 
     if lives <= 0:
         state = "gameover"
 
-    # SCREEN SHAKE
-
     offset_x = random.randint(-shake, shake)
     offset_y = random.randint(-shake, shake)
-
     shake = max(0, shake - 1)
-
-    # DRAW
 
     screen.fill((30,30,30))
 
-    # PLAYER
+
+    if flash_timer > 0:
+        flash = pygame.Surface((WIDTH, HEIGHT))
+        flash.fill((255,255,255))
+        flash.set_alpha(80)
+        screen.blit(flash, (0,0))
+        flash_timer -= 1
 
     screen.blit(
         player_img,
         (player.x + offset_x, player.y + offset_y)
     )
 
-    # PLAYER BULLETS
-
     for b in bullets:
-
         pygame.draw.rect(
             screen,
             (255,255,0),
             (b[0] + offset_x, b[1] + offset_y, 10, 5)
         )
 
-    # ENEMY BULLETS
-
     for eb in enemy_bullets:
-
         pygame.draw.circle(
             screen,
             (255, 50, 50),
@@ -525,77 +655,46 @@ while True:
             4
         )
 
-    # ENEMIES
-
     for e in enemies:
-
-        # TANK
+        dx = player.centerx - e["rect"].centerx
+        dy = player.centery - e["rect"].centery
+        angle = math.degrees(math.atan2(-dy, dx))
 
         if e["type"] == "tank":
-
-            flipped_img = pygame.transform.flip(enemy_tank_img, True, False)
-
-            screen.blit(
-                flipped_img,
-                (e["rect"].x + offset_x, e["rect"].y + offset_y)
-            )
-
-        # FAST
-
+            rotated = pygame.transform.rotate(enemy_tank_img, angle)
         elif e["type"] == "zigzag":
-
-            flipped_img = pygame.transform.flip(enemy_fast_img, True, False)
-
-            screen.blit(
-                flipped_img,
-                (e["rect"].x + offset_x, e["rect"].y + offset_y)
-            )
-
-        # NORMAL
-
+            rotated = pygame.transform.rotate(enemy_fast_img, angle)
+        elif e["type"] == "boss":
+            rotated = pygame.transform.rotate(boss_img, angle)
         else:
+            rotated = pygame.transform.rotate(enemy_normal_img, angle)
 
-            flipped_img = pygame.transform.flip(enemy_normal_img, True, False)
+        rect = rotated.get_rect(center=e["rect"].center)
+        screen.blit(rotated, (rect.x + offset_x, rect.y + offset_y))
 
-            screen.blit(
-                flipped_img,
-                (e["rect"].x + offset_x, e["rect"].y + offset_y)
-            )
-
-    # POWERUPS
+    for e in enemies:
+        if e["type"] == "boss":
+            pygame.draw.rect(screen, (255,0,0), (200, 20, 400, 30))
+            pygame.draw.rect(screen, (0,255,0), (200, 20, 400 * max(0, e["hp"]/300), 30))
+            text = font.render("FINAL BOSS", True, (255,255,255))
+            screen.blit(text, (320, 25))
+            break
 
     for p in powerups:
-
         color = (0,255,255) if p["type"] == "heal" else (255,0,255)
         if p["type"] == "rapid":
             color = (255,255,0)
-
         elif p["type"] == "spread":
-            color = (0,255,0)                   
+            color = (0,255,0)
         pygame.draw.rect(screen, color, p["rect"])
 
-    # UI
     screen.blit(font.render(f"Score: {score}", True, (255,255,255)), (10,10))
     screen.blit(font.render(f"Lives: {lives}", True, (255,100,100)), (10,40))
     screen.blit(font.render(f"Wave: {wave}", True, (100,255,100)), (10,70))
     screen.blit(font.render(f"Coins: {coins}", True, (255,255,0)), (10,100))
-    screen.blit(
-        font.render(f"Atk Speed: {shoot_delay} ms", True, (200,200,255)),
-        (500,10)
-    )
-    screen.blit(
-        font.render(f"Move Speed: {player_speed}", True, (200,255,200)),
-        (10,160)
-    )
-    screen.blit(
-        font.render(f"Damage: {damage}", True, (255,200,200)),
-        (10,190)
-    )
-    screen.blit(
-        font.render(f"Difficulty: {difficulty}", True, (180,180,255)),
-        (300,10)
-    )
+    screen.blit(font.render(f"Difficulty: {difficulty}", True, (180,180,255)), (300,10))
+    screen.blit(font.render(f"Star: {current_star + 1}/3", True, (255,255,0)), (300,40))
+    screen.blit(font.render(f"Goal Wave: {final_wave}", True, (255,255,255)), (300,70))
 
     pygame.display.flip()
-
     clock.tick(60)
