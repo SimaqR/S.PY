@@ -1,0 +1,1 @@
+jeg har jobbet med å gjøre koden min bedre og mer enkel til å forstå og jeg har prøved å justere på k,odenm min ved å lage nye koder ogf utforske koder med å teste koder og søke på nett om hva de kodene betyr
